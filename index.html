@@ -17,7 +17,9 @@
     --mono:"SFMono-Regular",Menlo,Consolas,"Courier New",monospace;
   }
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;
-    -webkit-user-select:none;user-select:none}
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  /* iOS：禁用长按触发的文本选择放大镜 / 呼出菜单 */
+  body{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
   html,body{width:100%;height:100%;height:100dvh;overflow:hidden;background:#edebe4}
   body{font-family:var(--font);
     background-image:radial-gradient(rgba(0,0,0,.05) 1px,transparent 1px);background-size:14px 14px}
@@ -81,15 +83,15 @@
   /* ── 方向键 ── */
   .dpadbig{background:linear-gradient(170deg,#2d2e33,#1f2024);border-radius:50%;padding:10px;
     box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -2px 5px rgba(0,0,0,.5)}
-  .dpadc{width:150px;height:150px;border-radius:50%;position:relative;
+  .dpadc{width:166px;height:166px;border-radius:50%;position:relative;
     background:linear-gradient(170deg,#3d3e43,#292a2e);
     box-shadow:inset 0 1px 1px rgba(255,255,255,.25),0 3px 6px rgba(0,0,0,.5)}
-  .db{position:absolute;width:46px;height:46px;border:0;cursor:pointer;font-size:16px;color:#e8e8e4;
-    background:linear-gradient(180deg,#56575d,#34353a);border-radius:11px;
+  .db{position:absolute;width:50px;height:50px;border:0;cursor:pointer;font-size:17px;color:#e8e8e4;
+    background:linear-gradient(180deg,#56575d,#34353a);border-radius:12px;
     box-shadow:inset 0 1px 1px rgba(255,255,255,.3),0 2px 4px rgba(0,0,0,.5);transition:transform .05s}
   .db:active,.db.pressed{transform:translateY(1px);box-shadow:inset 0 2px 5px rgba(0,0,0,.65)}
-  .d-up{left:52px;top:4px}.d-down{left:52px;bottom:4px}
-  .d-left{left:4px;top:52px}.d-right{right:4px;top:52px}
+  .d-up{left:58px;top:4px}.d-down{left:58px;bottom:4px}
+  .d-left{left:4px;top:58px}.d-right{right:4px;top:58px}
 
   /* ── 右侧功能圆盘 ── */
   .functurn{background:linear-gradient(170deg,#2d2e33,#1f2024);border-radius:50%;padding:10px;
@@ -162,7 +164,7 @@
     text-align:center;cursor:pointer}
   .gval.on{background:#2e4a26;color:#d8ffb8}
   .gin{width:64px;border:1px solid #cfe0c0;background:#1a2818;color:#fff;font-family:var(--mono);
-    font-size:12.5px;padding:2px 6px;text-align:center;outline:none;-webkit-user-select:text;user-select:text}
+    font-size:12.5px;padding:2px 6px;text-align:center;outline:none}
   .gin:focus{border-color:#a8d878;background:#22331e}
   .gwarn{font-size:10.5px;line-height:1.6;color:#f0c070;border:1px dashed #7a5a22;
     background:#241c0c;padding:5px 7px;margin:5px 0 0;display:none}
@@ -820,6 +822,11 @@ if (typeof exports === 'object' && typeof module === 'object') {
     btn.addEventListener('contextmenu',e=>e.preventDefault());
   });
   canvas.addEventListener('pointerdown',()=>{ try{canvas.focus();}catch(e){} });
+  /* 全局禁用长按呼出菜单 / 放大镜（iOS Safari 长按文本会弹出选择放大镜） */
+  window.addEventListener('contextmenu',e=>e.preventDefault(),true);
+  document.addEventListener('selectstart',e=>{
+    if(e.target&&e.target.tagName!=='INPUT') e.preventDefault();
+  },true);
   window.addEventListener('keydown',e=>{
     if(gameRunning&&e.target&&e.target.tagName!=='INPUT'){ try{canvas.focus();}catch(err){} }
   });
@@ -837,9 +844,22 @@ if (typeof exports === 'object' && typeof module === 'object') {
     }catch(e){}
   })();
   function unlockAudio(){
-    audioCtxList.forEach(c=>{ try{ if(c.state!=='running') c.resume(); }catch(e){} });
+    audioCtxList.forEach(c=>{
+      try{
+        if(c.state!=='running' && c.resume) c.resume();
+        /* iOS Safari：部分版本仅 resume 不够，需真实播放一小段静音音频才解除手势锁定 */
+        if(!c.__unlocked){
+          c.__unlocked=true;
+          const b=c.createBuffer(1,1,22050);
+          const s=c.createBufferSource();
+          s.buffer=b; s.connect(c.destination);
+          if(s.start) s.start(0); else if(s.noteOn) s.noteOn(0);
+        }
+      }catch(e){}
+    });
   }
   window.addEventListener('pointerdown',unlockAudio,true);
+  window.addEventListener('touchstart',unlockAudio,true);
   window.addEventListener('touchend',unlockAudio,true);
   window.addEventListener('keydown',unlockAudio,true);
   setInterval(()=>{ try{
