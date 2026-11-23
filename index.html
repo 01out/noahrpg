@@ -164,7 +164,8 @@
     text-align:center;cursor:pointer}
   .gval.on{background:#2e4a26;color:#d8ffb8}
   .gin{width:64px;border:1px solid #cfe0c0;background:#1a2818;color:#fff;font-family:var(--mono);
-    font-size:12.5px;padding:2px 6px;text-align:center;outline:none}
+    font-size:12.5px;padding:2px 6px;text-align:center;outline:none;
+    -webkit-user-select:text;user-select:text}
   .gin:focus{border-color:#a8d878;background:#22331e}
   .gwarn{font-size:10.5px;line-height:1.6;color:#f0c070;border:1px dashed #7a5a22;
     background:#241c0c;padding:5px 7px;margin:5px 0 0;display:none}
@@ -547,7 +548,10 @@ if (typeof exports === 'object' && typeof module === 'object') {
 
   /* ── 游戏目录（卡带库） ── */
   async function refreshCarts(){
-    carts=(await idbAll('carts')).sort((a,b)=>(b.last||0)-(a.last||0));
+    const all=await idbAll('carts');
+    /* 内存里只留元数据：字节留在 IndexedDB，用到时再读，避免多卡带把内存吃满（iOS 报缓存不足） */
+    carts=all.map(c=>{ const m=Object.assign({},c); delete m.bytes; return m; })
+      .sort((a,b)=>(b.last||0)-(a.last||0));
     const list=$('glist');
     list.innerHTML='';
     if(!carts.length){
@@ -611,6 +615,8 @@ if (typeof exports === 'object' && typeof module === 'object') {
     }else say('已载入 '+meta.name,1600);
     currentId=meta.id; currentMeta=meta;
     radarKey=''; clearRadar();
+    gameArmed=false;
+    $('gLibClose').style.display='';
     closeDlg();
     FS.writeFile('/game.npe',new Uint8Array(bytes));
     meta.last=Date.now();
@@ -624,6 +630,7 @@ if (typeof exports === 'object' && typeof module === 'object') {
       try{
         ModuleRef._npe_web_start();
         gameRunning=true;
+        unlockAudio();
         loader.classList.add('hide');
         applySettings();
         syncLamps();
@@ -700,6 +707,27 @@ if (typeof exports === 'object' && typeof module === 'object') {
   setInterval(refreshRadar,120);
   setInterval(syncLamps,600);
 
+  /* ── 游戏结束检测：引擎 run() 退出时 game_pad_mode 置空，get_mode() 变 -1 ──
+     游戏内点「结束游戏」后自动进入主界面（游戏目录选择页，游戏内风格） */
+  let gameArmed=false;
+  function gameEnded(){
+    if(!gameRunning) return;
+    gameRunning=false; gameArmed=false;
+    try{ savePrefs(currentId); syncSaves(); }catch(e){}
+    refreshCarts();
+    $('gLibClose').style.display='none';  /* 主界面不提供「关闭」 */
+    openDlg('gdlgLib');
+    say('游戏已结束 · 请选择下一个卡带',3200);
+  }
+  setInterval(()=>{
+    if(!gameRunning||!ModuleRef||!engineReady) return;
+    let m=-1;
+    try{ m=ModuleRef._npe_web_get_mode()|0; }catch(e){ return; }
+    if(m!==-1) gameArmed=true;          /* 引擎世界已初始化，确认在跑 */
+    else if(gameArmed) gameEnded();     /* 已确认跑过再变 -1 → 游戏结束 */
+  },300);
+  window.__npeDebugEnd=gameEnded;  /* 调试钩子：手动触发主界面 */
+
   /* ── 屏幕内弹窗 ── */
   function closeDlg(){ document.querySelectorAll('.gdlg').forEach(d=>d.classList.remove('show')); }
   function openDlg(id){ closeDlg(); $(id).classList.add('show'); }
@@ -736,7 +764,7 @@ if (typeof exports === 'object' && typeof module === 'object') {
   }
   $('btnSound').addEventListener('click',toggleSound);
   $('btnRadar').addEventListener('click',toggleRadar);
-  $('btnLib').addEventListener('click',()=>{ refreshCarts(); openDlg('gdlgLib'); });
+  $('btnLib').addEventListener('click',()=>{ $('gLibClose').style.display=''; refreshCarts(); openDlg('gdlgLib'); });
   $('gLibClose').addEventListener('click',closeDlg);
   $('gLibImport').addEventListener('click',()=>$('npefile').click());
   $('wimport').addEventListener('click',()=>$('npefile').click());
@@ -830,6 +858,13 @@ if (typeof exports === 'object' && typeof module === 'object') {
   window.addEventListener('keydown',e=>{
     if(gameRunning&&e.target&&e.target.tagName!=='INPUT'){ try{canvas.focus();}catch(err){} }
   });
+  /* 输入框内编辑：按键不进引擎（引擎会 preventDefault 吞掉退格等键，导致无法删除文字） */
+  ['keydown','keyup','keypress'].forEach(t=>window.addEventListener(t,e=>{
+    const tg=e.target;
+    if(tg&&(tg.tagName==='INPUT'||tg.tagName==='TEXTAREA'||tg.isContentEditable)){
+      e.stopImmediatePropagation();
+    }
+  },true));
 
   /* ── Web Audio 解锁 ── */
   const audioCtxList=[];
@@ -837,7 +872,16 @@ if (typeof exports === 'object' && typeof module === 'object') {
     try{
       const Orig=window.AudioContext||window.webkitAudioContext;
       if(!Orig) return;
-      const Wrapped=function(){ const c=new Orig(); audioCtxList.push(c); return c; };
+      const Wrapped=function(){
+        /* iOS 上 AudioContext 数量有上限（约 4 个）：新开一个就关掉旧的，防止连玩几局后没声音 */
+        while(audioCtxList.length){
+          const old=audioCtxList.pop();
+          try{ if(old.state!=='closed'&&old.close) old.close(); }catch(e){}
+        }
+        const c=new Orig(); audioCtxList.push(c);
+        try{ window.__audioCtxList=audioCtxList; }catch(e){}
+        return c;
+      };
       Wrapped.prototype=Orig.prototype;
       window.AudioContext=Wrapped;
       if(window.webkitAudioContext) window.webkitAudioContext=Wrapped;
