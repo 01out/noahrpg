@@ -133,8 +133,15 @@
   /* 小地图面板（游戏内风格） */
   #mmap{position:absolute;right:2.2%;top:2.2%;width:41%;max-width:330px;z-index:15;display:none;
     flex-direction:column;background:rgba(9,16,10,.92);border:1px solid #3a4a34;
-    color:#cfe0c0;font-family:var(--mono);box-shadow:0 4px 16px rgba(0,0,0,.55);padding:4px 5px 5px}
+    color:#cfe0c0;font-family:var(--mono);box-shadow:0 4px 16px rgba(0,0,0,.55);padding:4px 5px 5px;
+    touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
   #mmap.show{display:flex}
+  #mmap.mm-drag{border-color:#a8d878;box-shadow:0 0 0 1px #a8d878,0 6px 18px rgba(0,0,0,.6);cursor:move}
+  /* 右下角缩放手柄 */
+  .mm-rs{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;z-index:3}
+  .mm-rs::after{content:'';position:absolute;right:3px;bottom:3px;width:8px;height:8px;
+    border-right:2px solid rgba(207,224,192,.65);border-bottom:2px solid rgba(207,224,192,.65)}
+  .mm-rs:active::after{border-color:#a8d878}
   .mm-t{display:flex;align-items:center;justify-content:space-between;
     color:#a8d878;font-size:12px;letter-spacing:1px;border-bottom:1px solid #3a4a34;
     padding-bottom:3px;margin-bottom:4px}
@@ -283,13 +290,6 @@
           <canvas id="canvas" width="960" height="508" tabindex="0" aria-label="NPE 游戏画面"></canvas>
           <canvas id="radar" width="960" height="508" aria-hidden="true"></canvas>
 
-          <!-- 小地图面板（游戏内风格，可常驻 / M 键呼出） -->
-          <div id="mmap">
-            <div class="mm-t"><span>◆ 小地图</span><button class="mm-x" id="mmClose" aria-label="关闭小地图">✕</button></div>
-            <canvas id="mmapCv" width="520" height="350"></canvas>
-            <div class="mm-h" id="mmHint">进入地图后显示完整地图…</div>
-          </div>
-
           <div class="scan"></div><div class="glare"></div>
 
           <div id="loader"><div class="ring"></div><div>正在启动引擎…</div>
@@ -361,6 +361,14 @@
       <div class="openlab"><b>⌂</b> OPEN <button class="openpill"></button></div>
       <div class="digits">1 2 3 4 5 6 7 8 9 0</div>
       <div class="silk">NPE 模拟器 · NP666+</div>
+    </div>
+
+    <!-- 小地图面板（整机范围内自由摆放：长按拖动换位置，右下角手柄调大小） -->
+    <div id="mmap">
+      <div class="mm-t"><span>◆ 小地图</span><button class="mm-x" id="mmClose" aria-label="关闭小地图">✕</button></div>
+      <canvas id="mmapCv" width="520" height="350"></canvas>
+      <div class="mm-h" id="mmHint">进入地图后显示完整地图…</div>
+      <div class="mm-rs" id="mmRs" aria-label="拖动调整小地图大小"></div>
     </div>
   </div>
 </div>
@@ -859,8 +867,91 @@ if (typeof exports === 'object' && typeof module === 'object') {
   function mmToggle(force){
     const show=force==null?!mmPanel.classList.contains('show'):!!force;
     mmPanel.classList.toggle('show',show);
-    if(show) mmDraw();
+    if(show){ mmEnsureGeo(); mmDraw(); }
   }
+  /* ── 小地图手势：长按(0.4s)拖动换位置（整机范围），右下角手柄调大小 ──
+     位置/宽度存 localStorage（body 布局坐标），下次打开自动恢复。
+     边界用 offsetParent(.body)：与 style.left/top 的包含块一致，不会溢出机身。 */
+  /* offsetParent 只有面板显示时才有值（display:none 时为 null），必须惰性获取 */
+  function mmOP(){ return mmPanel.offsetParent||mmPanel.parentElement; }
+  let mmGeo=null;
+  try{ mmGeo=JSON.parse(localStorage.getItem('npe_mm_geo')||'null'); }catch(e){}
+  if(!mmGeo||typeof mmGeo.x!=='number') mmGeo=null;
+  function mmDevScale(){ const op=mmOP(); const r=op.getBoundingClientRect(); return r.width/(op.offsetWidth||1)||1; }
+  function mmClampGeo(){
+    const op=mmOP(),W=op.offsetWidth,H=op.offsetHeight;
+    mmGeo.w=Math.max(150,Math.min(mmGeo.w,W*.62));
+    mmPanel.style.width=mmGeo.w+'px';
+    mmGeo.x=Math.max(0,Math.min(mmGeo.x,W-mmPanel.offsetWidth));
+    mmGeo.y=Math.max(0,Math.min(mmGeo.y,H-mmPanel.offsetHeight));
+  }
+  function mmApplyGeo(){
+    mmPanel.style.maxWidth='none'; mmPanel.style.right='auto';
+    mmClampGeo();
+    mmPanel.style.left=mmGeo.x+'px'; mmPanel.style.top=mmGeo.y+'px';
+  }
+  function mmSaveGeo(){ try{ localStorage.setItem('npe_mm_geo',JSON.stringify(mmGeo)); }catch(e){} }
+  function mmEnsureGeo(){
+    if(mmGeo){ mmApplyGeo(); return; }
+    /* 默认位置：游戏屏幕右上角内侧 */
+    const lcd=$('lcd'), k=mmDevScale();
+    const lcdR=lcd.getBoundingClientRect(), opR=mmOP().getBoundingClientRect();
+    mmGeo={w:Math.round(lcd.offsetWidth*.41),x:0,y:0};
+    mmPanel.style.width=mmGeo.w+'px';   /* 先定宽才能量高度 */
+    mmGeo.x=(lcdR.right-opR.left)/k-mmGeo.w-lcd.offsetWidth*.022;
+    mmGeo.y=(lcdR.top-opR.top)/k+lcd.offsetHeight*.022;
+    mmApplyGeo();
+  }
+  let mmDrag=null,mmRsDrag=null;
+  mmPanel.addEventListener('pointerdown',ev=>{
+    if(ev.target.closest('.mm-x')||ev.target.closest('#mmRs')) return;
+    if(!mmGeo) mmEnsureGeo();
+    mmDrag={sx:ev.clientX,sy:ev.clientY,x0:mmGeo.x,y0:mmGeo.y,drag:false,
+      timer:setTimeout(()=>{ mmDrag.drag=true; mmPanel.classList.add('mm-drag'); vib(40);
+        try{ mmPanel.setPointerCapture(ev.pointerId); }catch(e){} },400)};
+  });
+  mmPanel.addEventListener('pointermove',ev=>{
+    if(!mmDrag) return;
+    const k=mmDevScale();
+    const dx=(ev.clientX-mmDrag.sx)/k, dy=(ev.clientY-mmDrag.sy)/k;
+    if(!mmDrag.drag){
+      if(Math.hypot(dx,dy)>8){ clearTimeout(mmDrag.timer); mmDrag=null; }
+      return;
+    }
+    ev.preventDefault();
+    mmGeo.x=mmDrag.x0+dx; mmGeo.y=mmDrag.y0+dy;
+    mmApplyGeo();
+  });
+  const mmDragEnd=()=>{
+    if(!mmDrag) return;
+    clearTimeout(mmDrag.timer);
+    if(mmDrag.drag){ mmPanel.classList.remove('mm-drag'); mmSaveGeo(); }
+    mmDrag=null;
+  };
+  mmPanel.addEventListener('pointerup',mmDragEnd);
+  mmPanel.addEventListener('pointercancel',mmDragEnd);
+  mmPanel.addEventListener('contextmenu',e=>e.preventDefault());
+  const mmRs=$('mmRs');
+  mmRs.addEventListener('pointerdown',ev=>{
+    ev.preventDefault(); ev.stopPropagation();
+    if(!mmGeo) mmEnsureGeo();
+    mmRsDrag={sx:ev.clientX,w0:mmGeo.w};
+    mmPanel.classList.add('mm-drag');
+    try{ mmRs.setPointerCapture(ev.pointerId); }catch(e){}
+  });
+  mmRs.addEventListener('pointermove',ev=>{
+    if(!mmRsDrag) return;
+    ev.preventDefault();
+    const k=mmDevScale();
+    mmGeo.w=mmRsDrag.w0+(ev.clientX-mmRsDrag.sx)/k;
+    mmApplyGeo();
+  });
+  const mmRsEnd=()=>{
+    if(!mmRsDrag) return;
+    mmPanel.classList.remove('mm-drag'); mmSaveGeo(); mmRsDrag=null;
+  };
+  mmRs.addEventListener('pointerup',mmRsEnd);
+  mmRs.addEventListener('pointercancel',mmRsEnd);
   $('btnMap').addEventListener('click',()=>{ vib(30); mmToggle(); });
   $('mmClose').addEventListener('click',()=>mmToggle(false));
   window.__npeMinimap=()=>({state:mmState,
