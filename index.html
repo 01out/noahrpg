@@ -606,6 +606,21 @@ if (typeof exports === 'object' && typeof module === 'object') {
     const err=checkCart(bytes);
     if(err){ say(err,4000); return; }
     if(!engineReady||!ModuleRef){ say('引擎尚未就绪，请稍候'); return; }
+    /* 引擎为 ASYNCIFY 构建：游戏进行中 run() 处于挂起状态，此时再调 _npe_web_start()
+       会造成 wasm 栈重入（Out of bounds memory access），音频状态也会被破坏。
+       运行中切换 → 先落盘存档与卡带数据，再受控刷新页面，
+       由启动流程按「上次游玩」自动恢复目标卡带（此时引擎无挂起状态，绝对安全）。 */
+    if(gameRunning){
+      try{
+        await savePrefs(currentId); syncSaves();
+        await idbPut('carts',Object.assign({},meta,{bytes:bytes}));
+        await idbPut('prefs',{id:'@last',cfg:{id:meta.id}});
+        sessionStorage.setItem('npeJustSwitched','1');
+      }catch(e){}
+      say('正在切换游戏…',3000);
+      setTimeout(()=>location.reload(),400);
+      return;
+    }
     const FS=ModuleRef.FS;
     if(currentId&&currentId!==meta.id) await savePrefs(currentId);
     await loadPrefs(meta.id);
@@ -631,6 +646,12 @@ if (typeof exports === 'object' && typeof module === 'object') {
         ModuleRef._npe_web_start();
         gameRunning=true;
         unlockAudio();
+        try{
+          if(sessionStorage.getItem('npeJustSwitched')){
+            sessionStorage.removeItem('npeJustSwitched');
+            say('轻触任意按键开启声音',3200);
+          }
+        }catch(e){}
         loader.classList.add('hide');
         applySettings();
         syncLamps();
